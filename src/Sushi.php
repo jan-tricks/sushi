@@ -28,7 +28,7 @@ trait Sushi
 
     protected function sushiShouldCache()
     {
-        return property_exists(static::class, 'rows');
+        return property_exists(static::class, 'rows') || property_exists(static::class, 'max_cache_time');;
     }
 
     public static function resolveConnection($connection = null)
@@ -44,19 +44,20 @@ trait Sushi
         $cacheDirectory = realpath(config('sushi.cache-path', storage_path('framework/cache')));
         $cachePath = $cacheDirectory.'/'.$cacheFileName;
         $dataPath = $instance->sushiCacheReferencePath();
+        $max_cache_time = property_exists($instance, 'max_cache_time') ? $instance->max_cache_time : null;
 
         $states = [
             'cache-file-found-and-up-to-date' => function () use ($cachePath) {
                 static::setSqliteConnection($cachePath);
             },
-            'cache-file-not-found-or-stale' => function () use ($cachePath, $dataPath, $instance) {
+            'cache-file-not-found-or-stale' => function () use ($cachePath, $dataPath, $instance, $max_cache_time) {
                 file_put_contents($cachePath, '');
 
                 static::setSqliteConnection($cachePath);
 
                 $instance->migrate();
 
-                touch($cachePath, filemtime($dataPath));
+                touch($cachePath, $max_cache_time ? time() : filemtime($dataPath));
             },
             'no-caching-capabilities' => function () use ($instance) {
                 static::setSqliteConnection(':memory:');
@@ -70,7 +71,11 @@ trait Sushi
                 $states['no-caching-capabilities']();
                 break;
 
-            case file_exists($cachePath) && filemtime($dataPath) <= filemtime($cachePath):
+            case $max_cache_time && file_exists($cachePath) && (time() - $max_cache_time <= filemtime($cachePath)):
+                $states['cache-file-found-and-up-to-date']();
+                break;
+
+            case ! $max_cache_time && file_exists($cachePath) && filemtime($dataPath) <= filemtime($cachePath):
                 $states['cache-file-found-and-up-to-date']();
                 break;
 
